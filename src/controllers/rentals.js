@@ -1,4 +1,5 @@
 const dbCon = require("../config/db");
+const finesController = require("./fines");
 
 // 1. [READ] ดึงข้อมูลประวัติการเช่าทั้งหมด + ค้นหา + แบ่งหน้า
 exports.get = async (req, res) => {
@@ -55,7 +56,7 @@ exports.get = async (req, res) => {
     }
 };
 
-// 2. [CREATE] ยืมหนังสือ (เช็กสิทธิ์ทับซ้อน + อัปเดตสถานะหนังสือ)
+// 2. [CREATE] ยืมหนังสือ (เช็กสิทธิ์ทับซ้อน + อัปเดตสถานะหนังสือ + check user status)
 exports.post = async (req, res) => {
     const { user_id, book_id } = req.body;
 
@@ -64,7 +65,21 @@ exports.post = async (req, res) => {
     }
 
     try {
-        // เช็กสถานะหนังสือในตาราง Books ก่อนว่ายืมได้ไหม
+        // ✅ เช็ก 1: ตรวจสอบสถานะผู้ใช้งาน (มี fine ค้างหรือ overdue books หรือไม่)
+        const userStatus = await finesController.checkUserStatus(user_id);
+
+        if (userStatus.hasIssue) {
+            let reason = [];
+            if (userStatus.hasUnpaidFines) reason.push("ค่าปรับค้างชำระ");
+            if (userStatus.hasOverdueBooks) reason.push("มีหนังสือเกินกำหนด");
+
+            return res.status(409).json({
+                error: true,
+                message: `ไม่สามารถยืมหนังสือได้ เนื่องจาก: ${reason.join(" และ ")}`
+            });
+        }
+
+        // ✅ เช็ก 2: ตรวจสอบสถานะหนังสือ
         const checkBookSql = "SELECT title, status FROM Books WHERE book_id = ? AND deleted_at IS NULL";
         const [books] = await dbCon.promise().query(checkBookSql, [book_id]);
 
@@ -73,15 +88,26 @@ exports.post = async (req, res) => {
         }
 
         if (books[0].status !== 'available') {
-            return res.status(409).json({ 
-                error: true, 
-                message: `หนังสือ '${books[0].title}' ไม่พร้อมให้บริการ (ติดสถานะ: ${books[0].status})` 
+            return res.status(409).json({
+                error: true,
+                message: `หนังสือ '${books[0].title}' ไม่พร้อมให้บริการ (ติดสถานะ: ${books[0].status})`
+            });
+        }
+
+        // ✅ เช็ก 3: ตรวจสอบว่า user มีหนังสือเล่มนี้ยืมอยู่แล้วหรือไม่
+        const checkDuplicateSql = "SELECT rental_id FROM Rentals WHERE user_id = ? AND book_id = ? AND status = 'active' AND deleted_at IS NULL";
+        const [duplicates] = await dbCon.promise().query(checkDuplicateSql, [user_id, book_id]);
+
+        if (duplicates.length > 0) {
+            return res.status(409).json({
+                error: true,
+                message: `คุณยืมหนังสือ '${books[0].title}' อยู่แล้ว ไม่สามารถยืมซ้ำได้`
             });
         }
 
         // บันทึกการยืมลงตาราง Rentals (กำหนดวันคืนอีก 7 วันข้างหน้า)
         const insertRentalSql = `
-            INSERT INTO Rentals (user_id, book_id, rent_date, due_date, status) 
+            INSERT INTO Rentals (user_id, book_id, rent_date, due_date, status)
             VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 7 DAY), 'active')
         `;
         const [rentalResult] = await dbCon.promise().query(insertRentalSql, [user_id, book_id]);
@@ -93,7 +119,8 @@ exports.post = async (req, res) => {
         return res.status(201).json({
             error: false,
             message: "ยืมหนังสือสำเร็จ",
-            rental_id: rentalResult.insertId
+            rental_id: rentalResult.insertId,
+            due_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
         });
 
     } catch (err) {
