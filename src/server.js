@@ -4,7 +4,7 @@ const bookRoutes = require('./routes/bookRoutes')
 const userRoutes = require('./routes/userRoutes')
 const rentalRoutes = require('./routes/rentalRoutes')
 const authRoutes = require('./routes/authRoutes');
-
+require('dotenv').config();
 const bulkRoutes = require('./routes/bulkRoutes');
 const app = express();
 

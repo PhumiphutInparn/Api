@@ -58,12 +58,14 @@ exports.login = async (req, res) => {
             return res.status(401).json({ error: true, message: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" });
         }
 
-        const secret = 'password'
+        const secret = process.env.JWT_SECRET;
         const token = jwt.sign({email , role:'member'} , secret , {expiresIn: '1h'})
 
         
-
-
+        const payload = {
+            user_id: user.user_id,
+            role: user.role
+            };
     
         return res.status(200).json({ error: false,
             token,

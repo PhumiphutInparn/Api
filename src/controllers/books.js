@@ -87,46 +87,98 @@ exports.post = async (req, res) => {
 
 // 3. [UPDATE] แก้ไขข้อมูลหนังสือ (ปรับปรุงใหม่: ยืดหยุ่น ส่งอะไรมาแก้อันนั้น)
 exports.patch = async (req, res) => {
-    const book_id = req.params.id;
-    const { title, author, isbn, status } = req.body;
+    const rental_id = req.params.id;
+    // รับค่าจากหน้าบ้าน (let แทน const เพราะเราอาจจะต้องแทรกแซงเปลี่ยนค่ามัน)
+    let { rental_status, new_due_date } = req.body;
+
+    if (!rental_status) {
+        return res.status(400).json({ 
+            error: true, 
+            message: "กรุณาส่ง 'rental_status' มาใน Body ด้วยครับ" 
+        });
+    }
 
     try {
-        let updateFields = [];
-        let queryParams = [];
+        // สเต็ปที่ 1: ดึงข้อมูลบิลมาเช็กก่อน และให้ Database คำนวณวันเกินกำหนด (overdue_days) มาให้เลย
+        const getRentalSql = `
+            SELECT book_id, due_date, DATEDIFF(NOW(), due_date) AS overdue_days 
+            FROM Rentals 
+            WHERE rental_id = ? AND deleted_at IS NULL
+        `;
+        const [rentals] = await dbCon.promise().query(getRentalSql, [rental_id]);
 
-        // เช็กตรวจสอบว่าส่งฟิลด์ไหนมาบ้าง สั่งต่อคิวรีเฉพาะตัวนั้น
-        if (title) { updateFields.push("title = ?"); queryParams.push(title); }
-        if (author) { updateFields.push("author = ?"); queryParams.push(author); }
-        if (isbn) { updateFields.push("isbn = ?"); queryParams.push(isbn); }
+        if (rentals.length === 0) {
+            return res.status(404).json({ error: true, message: "ไม่พบบิลเช่าหมายเลขนี้ในระบบ" });
+        }
+
+        const rentalData = rentals[0];
+        const book_id = rentalData.book_id;
+        const overdue_days = rentalData.overdue_days;
+
+        //  สเต็ปที่ 2: โลจิกกฎเหล็ก! ถ้าไม่ได้กำลังกดคืนหนังสือ และค้างส่งเกิน 30 วัน ➔ บังคับเปลี่ยนเป็น lost ทันที
+        if (rental_status !== 'returned' && overdue_days > 30) {
+            rental_status = 'lost';
+        }
+
+        // สเต็ปที่ 3: โลจิกคิดออโต้ จับคู่ตาราง Rentals ➔ Books
+        let autoBookStatus = null;
+        switch (rental_status) {
+            case 'returned':
+                autoBookStatus = 'available'; // คืนแล้ว ➔ ว่าง
+                break;
+            case 'lost':
+                autoBookStatus = 'lost';      // หาย ➔ ล็อกสถานะหาย (ถ้าเกิน 30 วันจะเด้งเข้าเคสนี้ออโต้)
+                break;
+            case 'overdue':
+                autoBookStatus = 'rented';    // ค้างส่งแต่ยังไม่เกิน 30 วัน ➔ ยังนับว่าถูกยืม
+                break;
+            case 'active':
+                autoBookStatus = 'rented';    // กำลังยืม ➔ ถูกยืม
+                break;
+            default:
+                return res.status(400).json({
+                    error: true,
+                    message: "สถานะ rental_status ไม่ถูกต้อง (ต้องเป็น active, returned, overdue หรือ lost เท่านั้น)"
+                });
+        }
+
+        // สเต็ปที่ 4: อัปเดตตาราง Rentals
+        let updateFields = ["status = ?"];
+        let sqlParams = [rental_status];
+
+        if (rental_status === 'returned') {
+            updateFields.push("return_date = NOW()"); // ลงเวลาคืนปัจจุบัน
+        } else {
+            updateFields.push("return_date = NULL");  // ล้างเวลาคืน
+        }
+
+        if (new_due_date) {
+            updateFields.push("due_date = ?");
+            sqlParams.push(new_due_date);
+        }
+
+        const returnSql = `UPDATE Rentals SET ${updateFields.join(', ')} WHERE rental_id = ?`;
+        sqlParams.push(rental_id);
+        await dbCon.promise().query(returnSql, sqlParams);
+
+        // สเต็ปที่ 5: สลับสถานะหนังสือในตาราง Books อัตโนมัติ (รวมไว้ที่เดียวกันแล้ว)
+        const updateBookSql = "UPDATE Books SET status = ? WHERE book_id = ?";
+        await dbCon.promise().query(updateBookSql, [autoBookStatus, book_id]);
+
+        // จัดเตรียมข้อความแจ้งเตือนหน้าบ้านให้ดูสวยงาม
+        let responseMessage = `อัปเดตสำเร็จ! บิล [${rental_status}] ➔ หนังสือ [${autoBookStatus}]`;
         
-        if (status) {
-            const validStatuses = ['available', 'rented', 'lost'];
-            if (!validStatuses.includes(status)) {
-                return res.status(400).json({ error: true, message: "สถานะไม่ถูกต้อง (ต้องเป็น available, rented หรือ lost เท่านั้น)" });
-            }
-            updateFields.push("status = ?");
-            queryParams.push(status);
+        // ถ้าถูกแทรกแซงด้วยกฎ 30 วัน ให้แจ้งเตือนบอกแอดมินด้วย
+        if (rental_status === 'lost' && overdue_days > 30 && req.body.rental_status !== 'lost') {
+            responseMessage += ` (ระบบจะปรับเป็น lost อัตโนมัติ เนื่องจากค้างส่งมาแล้ว ${overdue_days} วัน)`;
         }
 
-        // ถ้าไม่มีข้อมูลส่งมาในกล่องเลย
-        if (updateFields.length === 0) {
-            return res.status(400).json({ error: true, message: "ไม่มีข้อมูลที่ต้องการอัปเดต" });
-        }
+        return res.status(200).json({
+            error: false,
+            message: responseMessage
+        });
 
-        const sql = `UPDATE Books SET ${updateFields.join(', ')} WHERE book_id = ? AND deleted_at IS NULL`;
-        queryParams.push(book_id); 
-
-        const [result] = await dbCon.promise().query(sql, queryParams);
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ error: true, message: "ไม่พบรหัสหนังสือนี้ในระบบ" });
-        }
-
-        return res.status(200).json({ error: false, message: "Book updated successfully" });
     } catch (err) {
-        if (err.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({ error: true, message: "เลข ISBN นี้ถูกใช้งานกับหนังสือเล่มอื่นแล้ว" });
-        }
         console.log(err);
         return res.status(500).json({ error: true, message: "Internal Server Error" });
     }
