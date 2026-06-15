@@ -1,5 +1,4 @@
 const dbCon = require("../config/db");
-const finesController = require("./fines");
 
 // 1. [READ] ดึงข้อมูลประวัติการเช่าทั้งหมด + ค้นหา + แบ่งหน้า
 exports.get = async (req, res) => {
@@ -7,7 +6,6 @@ exports.get = async (req, res) => {
     const limit = parseInt(req.query.limit) || 4;
     const offset = (page - 1) * limit;
 
-    // รองรับการกรองตามรหัสบิล, รหัสคนยืม, รหัสหนังสือ หรือสถานะบิล ('active', 'returned')
     const { rental_id, user_id, book_id, status } = req.query;
 
     try {
@@ -24,7 +22,6 @@ exports.get = async (req, res) => {
         const totalItems = countResult[0].total;
         const totalPages = Math.ceil(totalItems / limit);
 
-        // ดึงข้อมูลการเช่า พร้อม JOIN ชื่อคนและชื่อหนังสือมาแสดงผลด้วย
         const dataSql = `
             SELECT r.rental_id, r.rent_date, r.due_date, r.return_date, r.status,
                    u.user_id, u.first_name, u.last_name, u.email,
@@ -56,7 +53,7 @@ exports.get = async (req, res) => {
     }
 };
 
-// 2. [CREATE] ยืมหนังสือ (เช็กสิทธิ์ทับซ้อน + อัปเดตสถานะหนังสือ + check user status)
+// 2. [CREATE] ยืมหนังสือ (เช็กสิทธิ์ทับซ้อน + สกัดเล่มที่หาย/ถูกยืมอยู่)
 exports.post = async (req, res) => {
     const { user_id, book_id } = req.body;
 
@@ -65,21 +62,7 @@ exports.post = async (req, res) => {
     }
 
     try {
-        // ✅ เช็ก 1: ตรวจสอบสถานะผู้ใช้งาน (มี fine ค้างหรือ overdue books หรือไม่)
-        const userStatus = await finesController.checkUserStatus(user_id);
-
-        if (userStatus.hasIssue) {
-            let reason = [];
-            if (userStatus.hasUnpaidFines) reason.push("ค่าปรับค้างชำระ");
-            if (userStatus.hasOverdueBooks) reason.push("มีหนังสือเกินกำหนด");
-
-            return res.status(409).json({
-                error: true,
-                message: `ไม่สามารถยืมหนังสือได้ เนื่องจาก: ${reason.join(" และ ")}`
-            });
-        }
-
-        // ✅ เช็ก 2: ตรวจสอบสถานะหนังสือ
+        // 🔍 เช็ก 1: ตรวจสอบสถานะหนังสือในคลัง ณ ปัจจุบัน
         const checkBookSql = "SELECT title, status FROM Books WHERE book_id = ? AND deleted_at IS NULL";
         const [books] = await dbCon.promise().query(checkBookSql, [book_id]);
 
@@ -87,14 +70,16 @@ exports.post = async (req, res) => {
             return res.status(404).json({ error: true, message: "ไม่พบข้อมูลหนังสือเล่มนี้ในระบบ" });
         }
 
-        if (books[0].status !== 'available') {
-            return res.status(409).json({
-                error: true,
-                message: `หนังสือ '${books[0].title}' ไม่พร้อมให้บริการ (ติดสถานะ: ${books[0].status})`
-            });
+        // ❌ ดักสกัดเงื่อนไข: ถ้าถูกคนอื่นยืมอยู่ หรือระบบตีเป็นสถานะ lost (หาย) แล้ว ห้ามยืมซ้ำเด็ดขาด!
+        if (books[0].status === 'rented') {
+            return res.status(409).json({ error: true, message: `หนังสือ '${books[0].title}' ไม่พร้อมให้บริการ เนื่องจากมีคนยืมไปแล้ว` });
+        }
+        
+        if (books[0].status === 'lost') {
+            return res.status(409).json({ error: true, message: `ไม่สามารถยืมหนังสือ '${books[0].title}' ได้ เนื่องจากสถานะระบุว่าสูญหาย (เกินกำหนดส่ง 7 วัน)` });
         }
 
-        // ✅ เช็ก 3: ตรวจสอบว่า user มีหนังสือเล่มนี้ยืมอยู่แล้วหรือไม่
+        // 🔍 เช็ก 2: ตรวจสอบว่าตนเองยืมเล่มนี้ค้างไว้แล้วหรือยัง
         const checkDuplicateSql = "SELECT rental_id FROM Rentals WHERE user_id = ? AND book_id = ? AND status = 'active' AND deleted_at IS NULL";
         const [duplicates] = await dbCon.promise().query(checkDuplicateSql, [user_id, book_id]);
 
@@ -105,20 +90,20 @@ exports.post = async (req, res) => {
             });
         }
 
-        // บันทึกการยืมลงตาราง Rentals (กำหนดวันคืนอีก 7 วันข้างหน้า)
+        // ✅ บันทึกการยืมลงตาราง Rentals (กำหนดวันคืนอีก 7 วันข้างหน้า)
         const insertRentalSql = `
             INSERT INTO Rentals (user_id, book_id, rent_date, due_date, status)
             VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 7 DAY), 'active')
         `;
         const [rentalResult] = await dbCon.promise().query(insertRentalSql, [user_id, book_id]);
 
-        //   อัปเดตสถานะหนังสือเป็น 'rented' เพื่อไม่ให้คนอื่นมายืมซ้ำ
+        // 🔄 อัปเดตสถานะล็อกเล่มหนังสือตัวใหญ่ให้กลายเป็น 'rented'
         const updateBookSql = "UPDATE Books SET status = 'rented' WHERE book_id = ?";
         await dbCon.promise().query(updateBookSql, [book_id]);
 
         return res.status(201).json({
             error: false,
-            message: "ยืมหนังสือสำเร็จ",
+            message: "ยืมหนังสือสำเร็จ กรุณาส่งคืนภายใน 7 วัน",
             rental_id: rentalResult.insertId,
             due_date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
         });
@@ -129,12 +114,11 @@ exports.post = async (req, res) => {
     }
 };
 
-// 3. [UPDATE] คืนหนังสือ (อัปเดตบิล + ปลดล็อกหนังสือ)
+// 3. [UPDATE] คืนหนังสือ (อัปเดตบิล + ปลดล็อกหนังสือกลับมาว่าง)
 exports.patch = async (req, res) => {
     const rental_id = req.params.id;
 
     try {
-        // 🔍 สเต็ปที่ 1: ดึงข้อมูลบิลเช่าออกมาก่อน เพื่อหาว่ายืมหนังสือเล่มไหนไป
         const getRentalSql = "SELECT book_id, status FROM Rentals WHERE rental_id = ? AND deleted_at IS NULL";
         const [rentals] = await dbCon.promise().query(getRentalSql, [rental_id]);
 
@@ -148,11 +132,11 @@ exports.patch = async (req, res) => {
 
         const book_id = rentals[0].book_id;
 
-        // 📝 สเต็ปที่ 2: อัปเดตบิลเช่าให้สถานะเป็น 'returned' และสแตมป์เวลาปัจจุบันลงใน return_date
+        // อัปเดตสถานะบิลในตาราง Rentals เป็นคืนแล้ว
         const returnSql = "UPDATE Rentals SET status = 'returned', return_date = NOW() WHERE rental_id = ?";
         await dbCon.promise().query(returnSql, [rental_id]);
 
-        // 🔓 สเต็ปที่ 3: ปลดล็อกหนังสือให้กลับมา 'available' เพื่อให้คนอื่นยืมต่อได้
+        // ปลดล็อกหนังสือในตาราง Books กลับมาพร้อมให้คนอื่นยืมต่อ (available)
         const freeBookSql = "UPDATE Books SET status = 'available' WHERE book_id = ?";
         await dbCon.promise().query(freeBookSql, [book_id]);
 
@@ -176,7 +160,6 @@ exports.delete = async (req, res) => {
     }
 
     try {
-        // 🛡️ เช็กป้องกัน: ห้ามลบบิลที่ยังไม่ได้คืนหนังสือ (กันแอดมินลบประวัติหนี)
         const checkSql = "SELECT status FROM Rentals WHERE rental_id = ? AND deleted_at IS NULL";
         const [rentals] = await dbCon.promise().query(checkSql, [rental_id]);
 

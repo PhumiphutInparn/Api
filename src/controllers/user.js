@@ -13,7 +13,6 @@ exports.get = async (req, res) => {
         let filterSql = " WHERE deleted_at IS NULL";
         let queryParams = []; 
 
-        // ค้นหาจากชื่อ, นามสกุล หรืออีเมล
         if (search) {
             filterSql += " AND (first_name LIKE ? OR last_name LIKE ? OR email LIKE ?)";
             const searchPattern = `%${search}%`;
@@ -30,7 +29,6 @@ exports.get = async (req, res) => {
         const totalItems = countResult[0].total;
         const totalPages = Math.ceil(totalItems / limit);
 
-        // ดึงข้อมูล (ไม่ดึง password_hash ออกมาโชว์เพื่อความปลอดภัย)
         const Sql = `
             SELECT user_id, email, first_name, last_name, role, created_at   
             FROM Users
@@ -58,7 +56,7 @@ exports.get = async (req, res) => {
     }
 };
 
-// 2. [CREATE] เพิ่มผู้ใช้งานใหม่ (Register)
+// 2. [CREATE] เพิ่มผู้ใช้งานใหม่ (Register พร้อม Auto-Hash)
 exports.post = async (req, res) => {
     const { email, password, first_name, last_name, role } = req.body;
 
@@ -66,7 +64,6 @@ exports.post = async (req, res) => {
         return res.status(400).json({ error: true, message: "กรุณากรอกอีเมล, รหัสผ่าน และชื่อจริงให้ครบถ้วน" });
     }
 
-    // กรอง Role ให้อยู่ใน ENUM ('admin', 'member') ถ้าไม่ส่งมาให้เป็น 'member'
     const validRole = (role && ['admin', 'member'].includes(role)) ? role : 'member';
 
     try {
@@ -83,7 +80,6 @@ exports.post = async (req, res) => {
         });
 
     } catch (err) {
-        // ดัก Error กรณีอีเมลซ้ำในระบบ (UNIQUE Constraint)
         if (err.code === 'ER_DUP_ENTRY') {
             return res.status(409).json({ error: true, message: "อีเมลนี้ถูกใช้งานแล้วในระบบ" });
         }
@@ -115,14 +111,12 @@ exports.patch = async (req, res) => {
             queryParams.push(hashedPassword); 
         }
 
-        // ถ้าไม่มีข้อมูลอะไรถูกส่งมาให้อัปเดตเลย
         if (updateFields.length === 0) {
             return res.status(400).json({ error: true, message: "ไม่มีข้อมูลที่ต้องการอัปเดต" });
         }
 
-        // นำฟิลด์มาต่อกัน เช่น "first_name = ?, role = ?"
         const sql = `UPDATE Users SET ${updateFields.join(', ')} WHERE user_id = ? AND deleted_at IS NULL`;
-        queryParams.push(user_id); // เอา ID ไว้ท้ายสุดตามตำแหน่ง ? ตัวสุดท้าย
+        queryParams.push(user_id); 
 
         const [result] = await dbCon.promise().query(sql, queryParams);
 
@@ -138,7 +132,7 @@ exports.patch = async (req, res) => {
     }
 };
 
-// 4. [DELETE] ลบผู้ใช้งาน (Soft Delete)
+// 4. [DELETE] ลบผู้ใช้งาน (Soft Delete พร้อมระบบดักเช็กหนี้หนังสือค้างส่ง)
 exports.delete = async (req, res) => {
     const user_id = req.params.id;
 
@@ -147,11 +141,9 @@ exports.delete = async (req, res) => {
     }
 
     try {
-        // 💡 ลอจิกป้องกันระดับเทพ: เช็กก่อนว่า User คนนี้มีหนังสือที่กำลังยืมอยู่ (active) หรือไม่
         const checkRentalsSql = "SELECT rental_id FROM Rentals WHERE user_id = ? AND status = 'active' AND deleted_at IS NULL";
         const [activeRentals] = await dbCon.promise().query(checkRentalsSql, [user_id]);
 
-        // ถ้ามีรายการค้างอยู่ เตะกลับทันที!
         if (activeRentals.length > 0) {
             return res.status(409).json({ 
                 error: true, 
@@ -159,7 +151,6 @@ exports.delete = async (req, res) => {
             });
         }
 
-        // ถ้าไม่ติดหนี้หนังสือ ก็ลบได้ตามปกติ
         const sql = "UPDATE Users SET deleted_at = NOW() WHERE user_id = ? AND deleted_at IS NULL";
         const [result] = await dbCon.promise().query(sql, [user_id]);
 
