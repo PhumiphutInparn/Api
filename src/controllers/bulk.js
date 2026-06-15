@@ -1,7 +1,7 @@
 const dbCon = require("../config/db");
 const bcrypt = require("bcrypt");
 
-// 1️⃣ [BULK] เพิ่มผู้ใช้หลายคนพร้อมกัน
+// 1️[BULK] เพิ่มผู้ใช้หลายคนพร้อมกัน
 exports.bulkCreateUsers = async (req, res) => {
     const { users } = req.body;
 
@@ -75,7 +75,7 @@ exports.bulkCreateUsers = async (req, res) => {
     }
 };
 
-// 2️⃣ [BULK] เพิ่มหนังสือหลายเล่มพร้อมกัน
+// 2️ [BULK] เพิ่มหนังสือหลายเล่มพร้อมกัน
 exports.bulkCreateBooks = async (req, res) => {
     const { books } = req.body;
 
@@ -147,7 +147,7 @@ exports.bulkCreateBooks = async (req, res) => {
     }
 };
 
-// 3️⃣ [BULK] เพิ่มการยืมหลายรายการพร้อมกัน
+// 3️[BULK] เพิ่มการยืมหลายรายการพร้อมกัน
 exports.bulkCreateRentals = async (req, res) => {
     const { rentals } = req.body;
 
@@ -157,8 +157,6 @@ exports.bulkCreateRentals = async (req, res) => {
             message: "กรุณาส่ง array 'rentals' ที่มีอย่างน้อย 1 รายการ"
         });
     }
-
-    const finesController = require('./fines');
 
     try {
         let successCount = 0;
@@ -180,24 +178,7 @@ exports.bulkCreateRentals = async (req, res) => {
             }
 
             try {
-                // เช็ก user status
-                const userStatus = await finesController.checkUserStatus(user_id);
-                if (userStatus.hasIssue) {
-                    const reason = [];
-                    if (userStatus.hasUnpaidFines) reason.push("มี fine ค้าง");
-                    if (userStatus.hasOverdueBooks) reason.push("มี overdue books");
-
-                    failedRentals.push({
-                        user_id,
-                        book_id,
-                        error: "user_status_issue",
-                        message: `ผู้ใช้มีปัญหา: ${reason.join(", ")}`
-                    });
-                    failureCount++;
-                    continue;
-                }
-
-                // เช็กหนังสือ
+                //  เช็กหนังสือ
                 const [books] = await dbCon.promise().query(
                     "SELECT title, status FROM Books WHERE book_id = ? AND deleted_at IS NULL",
                     [book_id]
@@ -214,6 +195,7 @@ exports.bulkCreateRentals = async (req, res) => {
                     continue;
                 }
 
+                //  เช็กสถานะหนังสือต้องพร้อมใช้งานเท่านั้น
                 if (books[0].status !== 'available') {
                     failedRentals.push({
                         user_id,
@@ -225,7 +207,7 @@ exports.bulkCreateRentals = async (req, res) => {
                     continue;
                 }
 
-                // เช็ก duplicate
+                //  เช็กการยืมซ้ำ (Duplicate)
                 const [duplicates] = await dbCon.promise().query(
                     "SELECT rental_id FROM Rentals WHERE user_id = ? AND book_id = ? AND status = 'active' AND deleted_at IS NULL",
                     [user_id, book_id]
@@ -242,14 +224,14 @@ exports.bulkCreateRentals = async (req, res) => {
                     continue;
                 }
 
-                // สร้างการยืม
+                //  สร้างการยืมลงตาราง Rentals
                 const insertRentalSql = `
                     INSERT INTO Rentals (user_id, book_id, rent_date, due_date, status)
                     VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 7 DAY), 'active')
                 `;
-                const [rentalResult] = await dbCon.promise().query(insertRentalSql, [user_id, book_id]);
+                await dbCon.promise().query(insertRentalSql, [user_id, book_id]);
 
-                // อัปเดตสถานะหนังสือ
+                //  อัปเดตสถานะล็อกเล่มหนังสือในตาราง Books
                 await dbCon.promise().query(
                     "UPDATE Books SET status = 'rented' WHERE book_id = ?",
                     [book_id]
@@ -283,8 +265,7 @@ exports.bulkCreateRentals = async (req, res) => {
         return res.status(500).json({ error: true, message: "Internal Server Error" });
     }
 };
-
-// 4️⃣ [BULK] Delete users หลายคนพร้อมกัน
+// 4️[BULK] Delete users หลายคนพร้อมกัน
 exports.bulkDeleteUsers = async (req, res) => {
     const { user_ids } = req.body;
 
@@ -361,7 +342,7 @@ exports.bulkDeleteUsers = async (req, res) => {
     }
 };
 
-// 5️⃣ [BULK] Delete books หลายเล่มพร้อมกัน
+// 5️[BULK] Delete books หลายเล่มพร้อมกัน
 exports.bulkDeleteBooks = async (req, res) => {
     const { book_ids } = req.body;
 

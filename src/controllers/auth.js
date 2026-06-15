@@ -58,22 +58,16 @@ exports.login = async (req, res) => {
             return res.status(401).json({ error: true, message: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" });
         }
 
-        const payload = {
-            user_id: user.user_id,
-            role: user.role
-        };
+        const secret = 'password'
+        const token = jwt.sign({email , role:'member'} , secret , {expiresIn: '1h'})
 
-        const token = jwt.sign(payload, 'mySuperSecretKey', { expiresIn: '1d' });
+        
 
-        return res.status(200).json({
-            error: false,
-            message: "เข้าสู่ระบบสำเร็จ",
-            user: {
-                user_id: user.user_id,
-                first_name: user.first_name,
-                role: user.role
-            }
-        });
+
+    
+        return res.status(200).json({ error: false,
+            token,
+            message: "เข้าสู่ระบบสำเร็จ"});
 
     } catch (err) {
         console.log(err);

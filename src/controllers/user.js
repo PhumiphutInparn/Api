@@ -56,12 +56,40 @@ exports.get = async (req, res) => {
     }
 };
 
+exports.getById = async (req, res) => {
+    const user_id = req.params.id; // ดักดึงรหัส ID ที่ส่งมากับพาธ URL
+
+    try {
+        const sql = `
+            SELECT user_id, email, first_name, last_name, role, created_at 
+            FROM Users 
+            WHERE user_id = ? AND deleted_at IS NULL
+        `;
+        const [users] = await dbCon.promise().query(sql, [user_id]);
+
+        // ถ้าค้นหาในฐานข้อมูลแล้วไม่เจอไอดีนี้ หรือผู้ใช้โดนลบไปแล้ว
+        if (users.length === 0) {
+            return res.status(404).json({ error: true, message: "ไม่พบข้อมูลผู้ใช้งานรายนี้ในระบบ" });
+        }
+
+        // ส่งข้อมูลผู้ใช้คนนั้น (ตำแหน่งที่ 0 ใน Array) กลับไปให้หน้าบ้านใช้งาน
+        return res.status(200).json({
+            error: false,
+            data: users[0]
+        });
+
+    } catch (err) {
+        console.log(err);
+        return res.status(500).json({ error: true, message: "Internal Server Error" });
+    }
+};
+
 // 2. [CREATE] เพิ่มผู้ใช้งานใหม่ (Register พร้อม Auto-Hash)
 exports.post = async (req, res) => {
     const { email, password, first_name, last_name, role } = req.body;
 
-    if (!email || !password || !first_name) {
-        return res.status(400).json({ error: true, message: "กรุณากรอกอีเมล, รหัสผ่าน และชื่อจริงให้ครบถ้วน" });
+    if (!email || !password || !first_name || !last_name) {
+        return res.status(400).json({ error: true, message: "กรุณากรอกอีเมล, รหัสผ่าน และชื่อ-นามสกุล ให้ครบถ้วน" });
     }
 
     const validRole = (role && ['admin', 'member'].includes(role)) ? role : 'member';
@@ -137,7 +165,7 @@ exports.delete = async (req, res) => {
     const user_id = req.params.id;
 
     if (!user_id) {
-        return res.status(400).json({ error: true, message: "กรุณาระบุรหัสผู้ใช้งานที่ต้องการลบ" });
+        return res.status(400).json({ error: true, message: "กรุณาระบุรหัส User ID ที่ต้องการลบ" });
     }
 
     try {

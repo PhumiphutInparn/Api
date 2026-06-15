@@ -8,6 +8,7 @@ const authRoutes = require('./routes/authRoutes');
 const bulkRoutes = require('./routes/bulkRoutes');
 const app = express();
 
+
 app.use(bodyParser.json())
 app.use(bodyParser.urlencoded({extended: true}))
 
