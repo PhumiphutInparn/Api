@@ -29,6 +29,6 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts"
-  ],
+, "app/cart/page.jsx", "app/(auth)/login/page.tsx", "services/auth.service.js"  ],
   "exclude": ["node_modules"]
 }
