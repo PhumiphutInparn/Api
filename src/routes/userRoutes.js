@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const users = require('../controllers/user');
 const verifyToken = require('../middleware/verifyToken');
-const {isAdmin} = require('../middleware')
+const {isAdmin} = require('../middleware/checkRole')
 
 router.get('/users', verifyToken,isAdmin,users.get);       
 router.get('/users/:id', verifyToken,isAdmin,users.getById);   

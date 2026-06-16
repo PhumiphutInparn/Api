@@ -8,6 +8,8 @@ require('dotenv').config();
 const bulkRoutes = require('./routes/bulkRoutes');
 const app = express();
 
+const cors = require('cors'); 
+app.use(cors()); // อนุญาตให้ทุกหน้าบ้านดึงข้อมูล API ได้
 
 app.use(bodyParser.json())
 app.use(bodyParser.urlencoded({extended: true}))

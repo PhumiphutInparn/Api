@@ -5,20 +5,19 @@ const jwt = require("jsonwebtoken");
 
 // [POST] ระบบสมัครสมาชิก (Register)
 exports.register = async (req, res) => {
-    const { email, password, first_name, last_name, role } = req.body;
+    const { email, password, first_name, last_name } = req.body;
 
     if (!email || !password || !first_name) {
-        return res.status(400).json({ error: true, message: "กรุณากรอกอีเมล, รหัสผ่าน และชื่อจริงให้ครบถ้วน" });
+        return res.status(400).json({ error: true, message: "กรุณากรอกอีเมล, รหัสผ่าน และชื่อ-นามสกุล ให้ครบถ้วน" });
     }
 
-    const validRole = (role && ['admin', 'member'].includes(role)) ? role : 'member';
 
     try {
         const saltRounds = 10;
         const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-        const sql = "INSERT INTO Users (email, password_hash, first_name, last_name, role) VALUES (?, ?, ?, ?, ?)";
-        const [result] = await dbCon.promise().query(sql, [email, hashedPassword, first_name, last_name, validRole]);
+        const sql = "INSERT INTO Users (email, password_hash, first_name, last_name, role) VALUES (?, ?, ?, ?, 'member')";
+        const [result] = await dbCon.promise().query(sql, [email, hashedPassword, first_name, last_name]);
 
         return res.status(201).json({
             error: false,
@@ -58,7 +57,7 @@ exports.login = async (req, res) => {
             return res.status(401).json({ error: true, message: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" });
         }
 
-        const secret = process.env.JWT_SECRET;
+        const secret = process.env.SERECT;
         const token = jwt.sign({email , role:'member'} , secret , {expiresIn: '1h'})
 
         
@@ -66,10 +65,19 @@ exports.login = async (req, res) => {
             user_id: user.user_id,
             role: user.role
             };
+
+        
+        console.log(` [LOGIN SUCCESS] User ID: ${user.user_id} เข้าสู่ระบบเมื่อ: ${new Date().toLocaleString('th-TH')}`);
+        const logSql = "INSERT INTO LoginLogs (user_id) VALUES (?)";
+        await dbCon.promise().query(logSql, [user.user_id]);
     
         return res.status(200).json({ error: false,
-            token,
-            message: "เข้าสู่ระบบสำเร็จ"});
+            message: "เข้าสู่ระบบสำเร็จ",
+            user_id: user.user_id,
+            first_name:user.first_name,
+            last_name_name:user.last_name,
+            role: user.role,
+            token,});
 
     } catch (err) {
         console.log(err);
