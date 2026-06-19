@@ -6,16 +6,19 @@ const { isAdmin } = require('../middleware/checkRole');
 const upload = require('../middleware/upload'); 
 
 
-// Admin
-
 router.get('/users', verifyToken, isAdmin, userController.get);       
-router.get('/users/:id', verifyToken, isAdmin, userController.getById);   
-router.post('/users/create', verifyToken, isAdmin, userController.post);
-router.patch('/users/edit/:id', verifyToken, isAdmin, userController.patch);
-router.delete('/users/delete/:id', verifyToken, isAdmin, userController.delete);
+router.get('/users/:id', verifyToken, (req, res, next) => {
+    const id = req.params.id;
+    if (req.user.role === 'member' && req.user.user_id != id) {
+        return res.status(403).json({ error: true, message: "ไม่มีสิทธิ์เข้าถึงข้อมูลส่วนตัวของสมาชิก" });
+    }
+    next(); 
+}, userController.getById); 
 
 
-//โซนอัปโหลดรูปโปรไฟล์ (Member)
+router.patch('/users/edit/:id', verifyToken, userController.patch);
+router.delete('/users/delete/:id', verifyToken, userController.delete);
+ 
 
 router.post('/upload-profile', verifyToken, upload.single('image'), userController.uploadProfilePicture);
 

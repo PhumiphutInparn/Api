@@ -6,15 +6,19 @@ const rentalRoutes = require('./routes/rentalRoutes')
 const authRoutes = require('./routes/authRoutes');
 require('dotenv').config();
 const bulkRoutes = require('./routes/bulkRoutes');
+const path = require('path');
 const app = express();
 
 const cors = require('cors'); 
 app.use(cors()); // อนุญาตให้ทุกหน้าบ้านดึงข้อมูล API ได้
 
+
 app.use(bodyParser.json())
 app.use(bodyParser.urlencoded({extended: true}))
 
-
+const fullPath = path.join(__dirname, '..', 'uploads');
+app.use('/uploads', express.static('uploads'));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(bookRoutes)
 app.use(userRoutes)
 app.use(rentalRoutes)

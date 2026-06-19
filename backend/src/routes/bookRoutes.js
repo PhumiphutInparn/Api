@@ -1,16 +1,16 @@
-const express =require('express')
-const router = express.Router()
+const express = require('express');
+const router = express.Router();
 const verifyToken = require('../middleware/verifyToken');
-const {isMember} = require('../middleware/checkRole')
-const boolks = require('../controllers/books')
+const { isAdmin } = require('../middleware/checkRole');
+const books = require('../controllers/books');
 
+// Member: ดูหนังสือได้
+router.get('/books', verifyToken, books.get);
+router.get('/books/:id', verifyToken, books.getById);
 
-
-router.get('/book' ,verifyToken,isMember ,boolks.get)
-router.get('/book/:id' ,verifyToken,isMember, boolks.get)
-router.post('/book/create' ,verifyToken,isMember, boolks.post)
-router.post('/book/update/:id' , verifyToken,isMember,boolks.patch)
-router.delete('/book/delete/:id',verifyToken,isMember ,boolks.delete)
-
+// Admin: จัดการหนังสือ
+router.post('/books/addBook', verifyToken, isAdmin, books.post);
+router.patch('/books/update/:id', verifyToken, isAdmin, books.updateBook);
+router.delete('/books/delete/:id', verifyToken, isAdmin, books.delete);
 
 module.exports = router;

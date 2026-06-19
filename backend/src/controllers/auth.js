@@ -7,7 +7,7 @@ const jwt = require("jsonwebtoken");
 exports.register = async (req, res) => {
     const { email, password, first_name, last_name } = req.body;
 
-    if (!email || !password || !first_name) {
+    if (!email || !password || !first_name || !last_name) {
         return res.status(400).json({ error: true, message: "กรุณากรอกอีเมล, รหัสผ่าน และชื่อ-นามสกุล ให้ครบถ้วน" });
     }
 
@@ -58,7 +58,12 @@ exports.login = async (req, res) => {
         }
 
         const secret = process.env.SERECT;
-        const token = jwt.sign({email , role:'member'} , secret , {expiresIn: '1h'})
+        const token = jwt.sign({
+            user_id: user.user_id,  
+            email: user.email, 
+            role: user.role
+        } 
+        , secret , {expiresIn: '1h'})
 
         
         const payload = {
